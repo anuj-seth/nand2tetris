@@ -54,11 +54,8 @@ CHIP ALU {
     And16(a=NotZeroedx, b=NotZeroedy, out=xandy);
     Mux16(a=xandy, b=xplusy, sel=f, out=xplusyOrxandy);
     Not16(in=xplusyOrxandy, out=NotxplusyOrxandy);
-    Mux16(a=xplusyOrxandy, b=NotxplusyOrxandy, sel=no, out=forbitout);
+    Mux16(a=xplusyOrxandy, b=NotxplusyOrxandy, sel=no, out=out, out[15]=ng, out=forbitout);
 
     Or16Way(in=forbitout, out=allzero);
     Not(in=allzero, out=zr);
-
-    Mux16(a=xplusyOrxandy, b=NotxplusyOrxandy, sel=no, out=out, out[15]=ng);
-
 }
