@@ -18,15 +18,29 @@
                  0))
 
 (defmulti to-bits first)
+
+(defmethod to-bits :JUMP
+  [[_ [tp value]]]
+  (let [jmp-to-bits {:JGT {:j3 1}
+                     :JEQ {:j2 1}
+                     :JGE {:j2 1 :j3 1}
+                     :JLT {:j1 1}
+                     :JNE {:j1 1 :j3 1}
+                     :JLE {:j1 1 :j2 1}
+                     :JMP {:j1 1 :j2 1 :j3 1}}]
+    (jmp-to-bits tp)))
+
 (defmethod to-bits :DEST
-  [[_ reg-or-mem]]
+  [[_ & destinations]]
   (let [dest-to-bits {[:REGISTER "D"] {:d2 1}
                       [:REGISTER "A"] {:d1 1}
                       [:MEMORY "M"]   {:d3 1}}]
-    (dest-to-bits reg-or-mem)))
+    (apply merge
+           (map dest-to-bits
+                destinations))))
 
 (defmethod to-bits :COMPUTE
-  [[_ [alu-op]]]
+  [[_ [alu-op op-string]]]
   (let [op-to-bits {:ZERO     (set-bits-to-one [:c1 :c3 :c5])
                     :ONE      (set-bits-to-one [:c1 :c2 :c3 :c4 :c5 :c6])
                     :MINUSONE (set-bits-to-one [:c1 :c2 :c3 :c5])
@@ -54,34 +68,41 @@
                     :DMINUSM  (set-bits-to-one [:a :c2 :c5 :c6])
                     :MMINUSD  (set-bits-to-one [:a :c4 :c5 :c6])
                     :DANDM    (set-bits-to-one [:a])
-                    :DORM     (set-bits-to-one [:a :c2 :c4 :c6]) }] 
-    (println "compute" alu-op)
+                    :DORM     (set-bits-to-one [:a :c2 :c4 :c6])}] 
     (op-to-bits alu-op)))
 
 (defmethod to-bits :default
   [instruction]
   instruction)
 
-(defmulti encode first)
+(defmulti encode (fn [instruction symbol-table]
+                   (first instruction)))
 
 (defmethod encode :COMMENT
-  [_]
+  [_ _]
   nil)
 
 (defmethod encode :EMPTYLINE
-  [_]
+  [_ _]
+  nil)
+
+(defmethod encode :LABEL
+  [_ _]
   nil)
 
 (defmethod encode :A-INSTRUCTION
-  [[_ _ [tp value]]]
-  (let [binary-digits (util/decimal-to-binary-n-digit (Integer/parseInt value)
+  [[_ _ [tp value-or-var]] symbol-table]
+  (let [value (if (= tp :NUMBER)
+                value-or-var
+                (symbol-table value-or-var))
+        binary-digits (util/decimal-to-binary-n-digit (Integer/parseInt value)
                                                       15)]
     (str "0" binary-digits)))
 
 ;; the bits of a c-instruction are
 ;; 1 1 1 a c1 c2 c3 c4 c5 c6 d1 d2 d3 j1 j2 j3
 (defmethod encode :C-INSTRUCTION
-  [instruction]
+  [instruction symbol-table]
   (let [bit-order [:op1 :op2 :op3 :a  :c1  :c2 :c3 :c4 :c5 :c6 :d1 :d2 :d3 :j1 :j2 :j3]
         default-bits (assoc (set-bits-to-zero bit-order)
                             :op1 1
@@ -93,10 +114,22 @@
     (string/join "" bits)))
 
 (defmethod encode :default
-  [instruction]
+  [instruction _]
   instruction)
 
 (comment 
-  (encode [:C-INSTRUCTION [:DEST [:REGISTER "D"]] [:COMPUTE [:AREG "A"]]])
+  (encode [:C-INSTRUCTION [:DEST [:REGISTER "D"]] [:COMPUTE [:AREG "A"]]]
+          {})
 
-  (encode [:C-INSTRUCTION [:DEST [:REGISTER "D"]] [:COMPUTE [:DPLUSA "D+A"]]]))
+  (encode [:A-INSTRUCTION "@" [:VARIABLE "A"]]
+          {"A" "1"})
+
+  (encode [:C-INSTRUCTION [:DEST [:REGISTER "D"]] [:COMPUTE [:DPLUSA "D+A"]]])
+
+  (encode [:C-INSTRUCTION [:COMPUTE [:ZERO "0"]] [:JUMP [:JMP "JGT"]]])
+
+  (encode [:C-INSTRUCTION [:COMPUTE [:DREG "D"]] [:JUMP [:JGT "JGT"]]])
+
+  (encode [:C-INSTRUCTION [:DEST [:MEMORY "M"] [:REGISTER "D"]] [:COMPUTE [:DECM "M-1"]]]))
+
+
