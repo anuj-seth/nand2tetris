@@ -1,0 +1,35 @@
+S = CODE|COMMENT|EMPTYLINE
+<CODE> = <SPACE*> STACK-CMD|ARITHMETIC-CMD|LOGICAL-CMD <SPACE*> COMMENT*
+SPACE = ' '
+COMMENT = <FORWARDSLASH FORWARDSLASH> COMMENT-TEXT
+COMMENT-TEXT = #".*"
+FORWARDSLASH = '/'
+EMPTYLINE = ''
+
+STACK-CMD = (PUSH|POP) <SPACE*> SEGMENT
+PUSH = <'push'>
+POP = <'pop'>
+SEGMENT = (ARGUMENT|LOCAL|STATIC|CONSTANT|THIS|THAT|POINTER|TEMP) <SPACE*> INDEX
+ARGUMENT = <'argument'>
+LOCAL = <'local'>
+STATIC = <'static'>
+CONSTANT = <'constant'>
+THIS = <'this'>
+THAT = <'that'>
+POINTER = <'pointer'>
+TEMP = <'temp'>
+INDEX = NUMBER
+<NUMBER> = #"\d+"
+
+<ARITHMETIC-CMD> = ADD|SUB|NEG
+ADD = <'add'>
+SUB = <'sub'>
+NEG = <'neg'>
+
+<LOGICAL-CMD> = EQ|GT|LT|AND|OR|NOT
+EQ = <'eq'>
+GT = <'gt'>
+LT = <'lt'>
+AND = <'and'>
+OR = <'or'>
+NOT = <'not'>
