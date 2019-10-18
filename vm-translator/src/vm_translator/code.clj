@@ -24,48 +24,75 @@
                          :REGISTER/R15 15
                          :MEM-LOCATION/SCREEN 16384
                          :MEM-LOCATION/KBD 24576
+                         :MEM-SEGMENT/TEMP "5"
                          :MEM-SEGMENT/LOCAL    "LCL"
                          :MEM-SEGMENT/ARGUMENT "ARG"
                          :MEM-SEGMENT/THIS     "THIS"
                          :MEM-SEGMENT/THAT     "THAT"})
 
-(defmulti segment-encoder (fn [[segment] _] segment))
+;; (defmulti segment-encoder (fn [[segment] _] segment))
 
-(defmethod segment-encoder :CONSTANT
-  [_ index]
-  {:type :CONSTANT
-   :assembly [(str "@" index)]})
+;; (defmethod segment-encoder :CONSTANT
+;;   [_ index]
+;;   {:type :CONSTANT
+;;    :assembly [(str "@" index)]})
 
-(defmethod segment-encoder :TEMP
-  [_ index]
-  {:type :TEMP
-   :assembly ["@5"
-              "D=A"
-              (str  "@" index)
-              "A=D+A"]})
+;; (defmethod segment-encoder :TEMP
+;;   [_ index]
+;;   {:type :TEMP
+;;    :assembly ["@5"
+;;               "D=A"
+;;               (str  "@" index)
+;;               "A=D+A"]})
 
-(defmethod segment-encoder :default
-  [[segment] index]
-  (let [register {:LOCAL    "LCL"
-                  :ARGUMENT "ARG"
-                  :THIS     "THIS"
-                  :THAT     "THAT"}]
-    [(str "@"
-          (register segment))
-     "D=M"
-     (str "@" index)
-     "D=D+A"
-     "A=D"]))
+;; (defmethod segment-encoder :default
+;;   [[segment] index]
+;;   (let [register {:LOCAL    "LCL"
+;;                   :ARGUMENT "ARG"
+;;                   :THIS     "THIS"
+;;                   :THAT     "THAT"}]
+;;     [(str "@"
+;;           (register segment))
+;;      "D=M"
+;;      (str "@" index)
+;;      "D=D+A"
+;;      "A=D"]))
 
-(def assembly {:end ["(END)" "@END" "0;JMP"]
-               :move-sp-to-a ["A=M"]
-               :move-a-to-sp-target ["D=A" "@SP" "A=M" "M=D"]
-               :move-a-target-to-sp-target ["D=M" "@SP" "A=M" "M=D"]
-               :move-d-to-sp-target ["@SP" "A=M" "M=D"]
-               :move-sp-target-to-d ["@SP" "A=M" "D=M"]
-               :move-sp-target-to-a ["@SP" "A=M" "A=M"]
-               :inc-sp ["@SP" "M=M+1"]
-               :dec-sp ["@SP" "M=M-1"]})
+(def assembly {:end (fn []
+                      ["(END)" "@END" "0;JMP"])
+               :move-sp-to-a (fn []
+                               ["A=M"])
+               :move-a-to-sp-target (fn []
+                                      ["D=A" "@SP" "A=M" "M=D"])
+               :move-a-target-to-sp-target (fn []
+                                             ["D=M" "@SP" "A=M" "M=D"])
+               :move-d-to-sp-target (fn []
+                                      ["@SP" "A=M" "M=D"])
+               :move-sp-target-to-d (fn []
+                                      ["@SP" "A=M" "D=M"])
+               :move-sp-target-to-a (fn []
+                                      ["@SP" "A=M" "A=M"])
+               :inc-sp (fn []
+                         ["@SP" "M=M+1"])
+               :dec-sp (fn []
+                         ["@SP" "M=M-1"])
+               :calculate-index-into-physical-segment (fn [segment idx]
+                                                        [(str "@"
+                                                              (predefined-symbols segment))
+                                                         "D=M"
+                                                         (str "@" idx)
+                                                         "D=D+A"
+                                                         "A=D"])
+               :calculate-index-into-temp-segment (fn [idx]
+                                                    ["@5"
+                                                     "D=A"
+                                                     (str "@" idx)
+                                                     "D=D+A"
+                                                     "A=D"])
+               :move-a-to-r13 (fn []
+                                ["D=A" "@R13" "M=D"])
+               :move-d-to-r13-target (fn []
+                                       ["@R13" "A=M" "M=D"])})
 
 (defn binary-op
   [operation]
@@ -73,22 +100,26 @@
              :SUB "-"
              :AND "&"
              :OR  "|"} operation)]
-    (concat (:dec-sp assembly)
-            (:move-sp-target-to-d assembly)
-            (:dec-sp assembly)
-            (:move-sp-to-a assembly)
-            [(str "M=M" op "D")]
-            (:inc-sp assembly))))
+    (mapcat #(%)
+            [(:dec-sp assembly)
+             (:move-sp-target-to-d assembly)
+             (:dec-sp assembly)
+             (:move-sp-to-a assembly)
+             (fn []
+               [(str "M=M" op "D")])
+             (:inc-sp assembly)])))
 
 (defn unary-op
   [operation]
   (let [op ({:NOT "!"
              :NEG "-"} operation)]
-    (concat (:dec-sp assembly)
-            (:move-sp-target-to-d assembly)
-            [(str "D=" op "D")]
-            (:move-d-to-sp-target assembly)
-            (:inc-sp assembly))))
+    (mapcat #(%)
+            [(:dec-sp assembly)
+             (:move-sp-target-to-d assembly)
+             (fn []
+               [(str "D=" op "D")])
+             (:move-d-to-sp-target assembly)
+             (:inc-sp assembly)])))
 
 (def label-counter (atom 0))
 
@@ -99,21 +130,23 @@
                  :GT {:label-name (str "GT_" counter) :op "JGT"}
                  :EQ {:label-name (str "EQ_" counter) :op "JEQ"}}
         {:keys [label-name op]} (op-data comparison-type)]
-    (concat (:dec-sp assembly)
-            (:move-sp-target-to-d assembly)
-            (:dec-sp assembly)
-            (:move-sp-target-to-a assembly)
-            ["D=A-D"
-             (str "@" label-name)
-             (str "D;" op)
-             "D=0"
-             (str "@D_TO_SP_" counter)
-             "0;JMP"
-             (str "(" label-name ")")
-             "D=-1"
-             (str  "(D_TO_SP_" counter ")")]
-            (:move-d-to-sp-target assembly)
-            (:inc-sp assembly))))
+    (mapcat #(%)
+            [(:dec-sp assembly)
+             (:move-sp-target-to-d assembly)
+             (:dec-sp assembly)
+             (:move-sp-target-to-a assembly)
+             (fn []
+               ["D=A-D"
+                (str "@" label-name)
+                (str "D;" op)
+                "D=0"
+                (str "@D_TO_SP_" counter)
+                "0;JMP"
+                (str "(" label-name ")")
+                "D=-1"
+                (str  "(D_TO_SP_" counter ")")])
+             (:move-d-to-sp-target assembly)
+             (:inc-sp assembly)])))
 
 (derive :MEM-SEGMENT/LOCAL :MEM-SEGMENT/PHYSICAL)
 (derive :MEM-SEGMENT/ARGUMENT :MEM-SEGMENT/PHYSICAL)
@@ -123,53 +156,61 @@
 
 (defmethod stack-cmd [:PUSH :MEM-SEGMENT/CONSTANT]
   [_ [_ idx]]
-  (println "in push constant " idx)
-  (concat [(str "@" idx)]
-          (:move-a-to-sp-target assembly)
-          (:inc-sp assembly)))
+  (mapcat #(%)
+          [(fn []
+             [(str "@" idx)])
+           (:move-a-to-sp-target assembly)
+           (:inc-sp assembly)]))
 
 (defmethod stack-cmd [:PUSH :MEM-SEGMENT/TEMP]
   [_ [_ idx]]
-  (concat ["@5"
-           "D=A"
-           (str  "@" idx)
-           "A=D+A"]
-          (:move-a-target-to-sp-target assembly)
-          (:inc-sp assembly)))
+  (mapcat #(%)
+          [(partial (:calculate-index-into-temp-segment assembly)
+                    idx)
+           (:move-a-target-to-sp-target assembly)
+           (:inc-sp assembly)]))
 
 (defmethod stack-cmd [:PUSH :MEM-SEGMENT/PHYSICAL]
   [_ [segment idx]]
-  (println "in PHYSICAL push" segment)
-  (let [register #:MEM-SEGMENT{:LOCAL    "LCL"
-                               :ARGUMENT "ARG"
-                               :THIS     "THIS"
-                               :THAT     "THAT"}]
-    (concat [(str "@"
-                  (register segment))
-             "D=M"
-             (str "@" idx)
-             "D=D+A"
-             "A=D"]
-            (:move-a-target-to-sp-target assembly)
-            (:inc-sp assembly))))
+  (mapcat #(%)
+          [(partial (:calculate-index-into-physical-segment assembly)
+                    segment
+                    idx)
+           (:move-a-target-to-sp-target assembly)
+           (:inc-sp assembly)]))
 
-(defmethod stack-cmd :POP
-  [_ segment]
-  (concat segment
-          ["D=A" "@R5" "M=D"]
-          (:dec-sp assembly)
-          (:move-sp-target-to-d assembly)
-          ["@R5" "A=M" "M=D"]))
+(defmethod stack-cmd [:POP :MEM-SEGMENT/TEMP]
+  [_ [_ idx]]
+  (mapcat #(%)
+          [(partial (:calculate-index-into-temp-segment assembly)
+                    idx)
+           (:move-a-to-r13 assembly)
+           (:dec-sp assembly)
+           (:move-sp-target-to-d assembly)
+           (:move-d-to-r13-target assembly)]))
+
+(defmethod stack-cmd [:POP :MEM-SEGMENT/PHYSICAL]
+  [_ [segment idx]]
+  (mapcat #(%)
+          [(partial (:calculate-index-into-physical-segment assembly)
+                    segment
+                    idx)
+           (:move-a-to-r13 assembly)
+           (:dec-sp assembly)
+           (:move-sp-target-to-d assembly)
+           (:move-d-to-r13-target assembly)]))
 
 (defmethod stack-cmd :default
-  [push-or-pop segment]
-  (println push-or-pop segment))
+  [push-or-pop [segment _]]
+  (throw (ex-info "No matching stack-cmd"
+                  {:op push-or-pop
+                   :segment segment})))
 
 (defn encode
   [{:keys [parse-tree] :as data}]
   (assoc data
          :assembly
-         (insta/transform {:END       (constantly (:end assembly))
+         (insta/transform {:END       (:end assembly)
                            :COMMENT   (constantly nil)
                            :EMPTYLINE (constantly nil)
                            :INDEX     identity 
@@ -197,152 +238,71 @@
 
 
 (comment
-  (insta/transform
-   {:COMMENT nil
-    :EMPTYLINE (constantly nil)
-    :INDEX #(Integer/parseInt %)
-    :CONSTANT (constantly :CONSTANT)}
-   [:EMPTYLINE])
-
-  (insta/transform {:COMMENT (constantly nil)
-                    :EMPTYLINE (constantly nil)
-                    :INDEX identity 
-                    :CONSTANT (constantly :CONSTANT)
-                    :SEGMENT segment-encoder
-                    :PUSH (constantly ["D=A" "@SP" "A=M" "M=D" "@SP" "M=M+1"])
-                    :STACK-CMD (fn [push-or-pop segment]
-                                 (concat segment
-                                         push-or-pop))}
-                   [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "8"]]])
-
-  (add-assembly
-       '({:code "// This file is part of www.nand2tetris.org",
-          :parse-tree [:COMMENT [:COMMENT-TEXT " This file is part of www.nand2tetris.org"]]}
-         {:code "// and the book \"The Elements of Computing Systems\"",
-          :parse-tree [:COMMENT [:COMMENT-TEXT " and the book \"The Elements of Computing Systems\""]]}
-         {:code "// by Nisan and Schocken, MIT Press.",
-          :parse-tree [:COMMENT [:COMMENT-TEXT " by Nisan and Schocken, MIT Press."]]}
-         {:code "// File name: projects/07/StackArithmetic/SimpleAdd/SimpleAdd.vm",
-          :parse-tree [:COMMENT [:COMMENT-TEXT " File name: projects/07/StackArithmetic/SimpleAdd/SimpleAdd.vm"]]}
-         {:code "", :parse-tree [:EMPTYLINE]}
-         {:code "// Pushes and adds two constants.",
-          :parse-tree [:COMMENT [:COMMENT-TEXT " Pushes and adds two constants."]]}
-         {:code "push constant 7",
-          :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "7"]]]}
-         {:code "push constant 8",
-          :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "8"]]]}
-         {:code "push local 8",
-          :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:LOCAL] [:INDEX "8"]]]}
-         {:code "add", :parse-tree [:ADD]}))
+  
   (add-assembly
    '({:code "// This file is part of www.nand2tetris.org",
-      :parse-tree
-      [:COMMENT
-       [:COMMENT-TEXT " This file is part of www.nand2tetris.org"]]}
+      :parse-tree [:COMMENT [:COMMENT-TEXT " This file is part of www.nand2tetris.org"]]}
      {:code "// and the book \"The Elements of Computing Systems\"",
-      :parse-tree
-      [:COMMENT
-       [:COMMENT-TEXT
-        " and the book \"The Elements of Computing Systems\""]]}
+      :parse-tree [:COMMENT [:COMMENT-TEXT " and the book \"The Elements of Computing Systems\""]]}
      {:code "// by Nisan and Schocken, MIT Press.",
-      :parse-tree
-      [:COMMENT [:COMMENT-TEXT " by Nisan and Schocken, MIT Press."]]}
-     {:code
-      "// File name: projects/07/StackArithmetic/StackTest/StackTest.vm",
-      :parse-tree
-      [:COMMENT
-       [:COMMENT-TEXT
-        " File name: projects/07/StackArithmetic/StackTest/StackTest.vm"]]}
-     {:code "", :parse-tree [:EMPTYLINE]}
-     {:code "// Executes a sequence of arithmetic and logical operations",
-      :parse-tree
-      [:COMMENT
-       [:COMMENT-TEXT
-        " Executes a sequence of arithmetic and logical operations"]]}
-     {:code "// on the stack. ",
-      :parse-tree [:COMMENT [:COMMENT-TEXT " on the stack. "]]}
-     {:code "push constant 17",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "17"]]]}
-     {:code "push constant 17",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "17"]]]}
-     {:code "eq", :parse-tree [:EQ]}
-     {:code "push constant 17",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "17"]]]}
-     {:code "push constant 16",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "16"]]]}
-     {:code "eq", :parse-tree [:EQ]}
-     {:code "push constant 16",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "16"]]]}
-     {:code "push constant 17",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "17"]]]}
-     {:code "eq", :parse-tree [:EQ]}
-     {:code "push constant 892",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "892"]]]}
-     {:code "push constant 891",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "891"]]]}
-     {:code "lt", :parse-tree [:LT]}
-     {:code "push constant 891",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "891"]]]}
-     {:code "push constant 892",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "892"]]]}
-     {:code "lt", :parse-tree [:LT]}
-     {:code "push constant 891",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "891"]]]}
-     {:code "push constant 891",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "891"]]]}
-     {:code "lt", :parse-tree [:LT]}
-     {:code "push constant 32767",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "32767"]]]}
-     {:code "push constant 32766",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "32766"]]]}
-     {:code "gt", :parse-tree [:GT]}
-     {:code "push constant 32766",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "32766"]]]}
-     {:code "push constant 32767",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "32767"]]]}
-     {:code "gt", :parse-tree [:GT]}
-     {:code "push constant 32766",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "32766"]]]}
-     {:code "push constant 32766",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "32766"]]]}
-     {:code "gt", :parse-tree [:GT]}
-     {:code "push constant 57",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "57"]]]}
-     {:code "push constant 31",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "31"]]]}
-     {:code "push constant 53",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "53"]]]}
+      :parse-tree [:COMMENT [:COMMENT-TEXT " by Nisan and Schocken, MIT Press."]]}
+     {:code "// File name: projects/07/MemoryAccess/BasicTest/BasicTest.vm",
+      :parse-tree [:COMMENT [:COMMENT-TEXT " File name: projects/07/MemoryAccess/BasicTest/BasicTest.vm"]]}
+     {:code "",
+      :parse-tree [:EMPTYLINE]}
+     {:code "// Executes pop and push commands using the virtual memory segments.",
+      :parse-tree [:COMMENT [:COMMENT-TEXT " Executes pop and push commands using the virtual memory segments."]]}
+     {:code "push constant 10",
+      :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "10"]]]}
+     {:code "pop local 0",
+      :parse-tree [:STACK-CMD [:POP] [:SEGMENT [:LOCAL] [:INDEX "0"]]]}
+     {:code "push constant 21",
+      :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "21"]]]}
+     {:code "push constant 22",
+      :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "22"]]]}
+     {:code "pop argument 2",
+      :parse-tree [:STACK-CMD [:POP] [:SEGMENT [:ARGUMENT] [:INDEX "2"]]]}
+     {:code "pop argument 1",
+      :parse-tree [:STACK-CMD [:POP] [:SEGMENT [:ARGUMENT] [:INDEX "1"]]]}
+     {:code "push constant 36",
+      :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "36"]]]}
+     {:code "pop this 6",
+      :parse-tree [:STACK-CMD [:POP] [:SEGMENT [:THIS] [:INDEX "6"]]]}
+     {:code "push constant 42",
+      :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "42"]]]}
+     {:code "push constant 45",
+      :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "45"]]]}
+     {:code "pop that 5",
+      :parse-tree [:STACK-CMD [:POP] [:SEGMENT [:THAT] [:INDEX "5"]]]}
+     {:code "pop that 2",
+      :parse-tree [:STACK-CMD [:POP] [:SEGMENT [:THAT] [:INDEX "2"]]]}
+     {:code "push constant 510",
+      :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "510"]]]}
+     {:code "pop temp 6",
+      :parse-tree [:STACK-CMD [:POP] [:SEGMENT [:TEMP] [:INDEX "6"]]]}
+     {:code "push local 0",
+      :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:LOCAL] [:INDEX "0"]]]}
+     {:code "push that 5",
+      :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:THAT] [:INDEX "5"]]]}
+     {:code "add",
+      :parse-tree [:ADD]}
+     {:code "push argument 1",
+      :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:ARGUMENT] [:INDEX "1"]]]}
+     {:code "sub",
+      :parse-tree [:SUB]}
+     {:code "push this 6",
+      :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:THIS] [:INDEX "6"]]]}
+     {:code "push this 6",
+      :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:THIS] [:INDEX "6"]]]}
      {:code "add", :parse-tree [:ADD]}
-     {:code "push constant 112",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "112"]]]}
-     {:code "sub", :parse-tree [:SUB]}
-     {:code "neg", :parse-tree [:NEG]}
-     {:code "and", :parse-tree [:AND]}
-     {:code "push constant 82",
-      :parse-tree
-      [:STACK-CMD [:PUSH] [:SEGMENT [:CONSTANT] [:INDEX "82"]]]}
-     {:code "or", :parse-tree [:OR]}
-     {:code "not", :parse-tree [:NOT]}))
+     {:code "sub",
+      :parse-tree [:SUB]}
+     {:code "push temp 6",
+      :parse-tree [:STACK-CMD [:PUSH] [:SEGMENT [:TEMP] [:INDEX "6"]]]}
+     {:code "add", :parse-tree [:ADD]}))
+
   )
+
+
+
+

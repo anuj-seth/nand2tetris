@@ -17,6 +17,7 @@
 
 (comment
 
-  (clojure.pprint/pprint (parse "/home/anuj/nand2tetris/nand2tetris/projects/07/MemoryAccess/BasicTest/BasicTest.vm")))
+  (clojure.pprint/pprint (parse
+                          "/home/anuj/nand2tetris/nand2tetris/projects/07/MemoryAccess/BasicTest/BasicTest.vm")))
 
 
