@@ -23,7 +23,10 @@
 (comment 
   (-main "/home/anuj/nand2tetris/nand2tetris/projects/06/add/Add.asm")
 
-  (parser/parse "/home/anuj/nand2tetris/nand2tetris/projects/06/pong/miniPong.asm"))
+  (let [asm-file "/home/anuj/nand2tetris/nand2tetris/projects/06/pong/PongL.asm"
+        instructions (time (doall (parser/parse asm-file)))]
+    (time (sym-tab/labels instructions)))
+  )
 
 
 
